@@ -48,3 +48,7 @@ htmlcov/
 # Carpetas especificadas por el usuario
 doc_temp/
 .agents/
+
+# Archivos de empaquetado y logs locales
+*.spec
+debloat.log

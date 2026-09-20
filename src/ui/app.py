@@ -1,192 +1,128 @@
 import customtkinter as ctk
-from tkinter import ttk, messagebox, Menu, filedialog
+from tkinter import ttk, messagebox, filedialog
 import threading
-import sys
-import os
 import webbrowser
 import csv
 import json
+import sys
+import os
 
 # Asegurar que importamos la lógica del core correctamente
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-from src.core.adb_client import ADBClient
 
-class App(ctk.CTk):
+from src.core.adb_client import ADBClient
+from src.config import Config
+from src.core.logger import get_logger
+from src.ui.components.top_frame import TopFrame
+from src.ui.components.middle_frame import MiddleFrame
+from src.ui.components.bottom_frame import BottomFrame
+
+logger = get_logger(__name__)
+
+# Configuración global del tema
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("blue")
+
+class DebloatApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         
-        self.title("Samsung Debloat Tool")
-        self.geometry("1100x700")
-        self.minsize(900, 600)
+        logger.info("Iniciando Samsung Debloat Tool UI")
         
+        self.title(Config.APP_TITLE)
+        self.geometry(Config.WINDOW_SIZE)
+        self.minsize(800, 500)
+        
+        # Inyección de dependencias
         self.client = ADBClient()
-        self.paquetes_cache = [] # Lista de tuplas: (pkg, status, origen, descripcion)
+        self.paquetes_cache = []
         
-        # Configurar la cuadrícula principal (3 filas: Top, Middle, Bottom)
-        self.grid_rowconfigure(0, weight=0) # Barra superior (tamaño fijo)
-        self.grid_rowconfigure(1, weight=1) # Lista central (expansible)
-        self.grid_rowconfigure(2, weight=0) # Botones inferiores (tamaño fijo)
+        self.grid_rowconfigure(1, weight=1)
         self.grid_columnconfigure(0, weight=1)
         
-        self._build_top_frame()
-        self._build_middle_frame()
-        self._build_bottom_frame()
-        self._build_context_menu()
+        self._apply_treeview_styles()
         
-        # Cargar lista automáticamente al iniciar (en hilo separado)
+        # Instanciación de componentes modulares
+        self.top_frame = TopFrame(self, controller=self)
+        self.top_frame.grid(row=0, column=0, padx=20, pady=(20, 10), sticky="ew")
+        
+        self.middle_frame = MiddleFrame(self, controller=self)
+        self.middle_frame.grid(row=1, column=0, padx=20, pady=0, sticky="nsew")
+        
+        self.bottom_frame = BottomFrame(self, controller=self)
+        self.bottom_frame.grid(row=2, column=0, padx=20, pady=(10, 20), sticky="ew")
+        
         self.refresh_list()
 
-    def _build_top_frame(self):
-        """Construye la barra superior con el buscador y filtros."""
-        self.top_frame = ctk.CTkFrame(self)
-        self.top_frame.grid(row=0, column=0, padx=20, pady=(20, 10), sticky="ew")
-        self.top_frame.grid_columnconfigure(0, weight=1)
-        
-        # Contenedor para la info del dispositivo y el botón de reinicio
-        self.header_frame = ctk.CTkFrame(self.top_frame, fg_color="transparent")
-        self.header_frame.grid(row=0, column=0, columnspan=3, pady=(0, 10), sticky="ew")
-        self.header_frame.grid_columnconfigure(0, weight=1)
-        
-        self.device_info_label = ctk.CTkLabel(self.header_frame, text="📱 Esperando conexión...", text_color="#f57c00", font=ctk.CTkFont(size=14, weight="bold"))
-        self.device_info_label.grid(row=0, column=0, sticky="w")
-        
-        self.btn_reboot = ctk.CTkButton(self.header_frame, text="🔄 Reiniciar Teléfono", width=140, fg_color="#d32f2f", hover_color="#9a0007", command=self.reboot_device_prompt)
-        self.btn_reboot.grid(row=0, column=1, sticky="e")
-        
-        # Barra de búsqueda
-        self.search_entry = ctk.CTkEntry(self.top_frame, placeholder_text="Buscar paquete (ej: bixby, samsung, facebook)...")
-        self.search_entry.grid(row=1, column=0, padx=(10, 10), pady=10, sticky="ew")
-        self.search_entry.bind("<KeyRelease>", self.on_search) # Filtrar en tiempo real mientras el usuario escribe
-        self.search_entry.bind("<<Paste>>", self._on_paste) # Fix para Linux: reemplazar texto seleccionado al pegar
-        
-        # Filtro por Origen
-        self.origin_var = ctk.StringVar(value="Sistema") # Por defecto solo mostramos los del sistema
-        self.origin_menu = ctk.CTkOptionMenu(self.top_frame, values=["Cualquier Origen", "Sistema", "Terceros"],
-                                             variable=self.origin_var, command=self.on_filter)
-        self.origin_menu.grid(row=1, column=1, padx=(0, 10), pady=10)
-        
-        # Filtro por Estado
-        self.filter_var = ctk.StringVar(value="Todos")
-        self.filter_menu = ctk.CTkOptionMenu(self.top_frame, values=["Todos", "Activo", "Desactivado"],
-                                             variable=self.filter_var, command=self.on_filter)
-        self.filter_menu.grid(row=1, column=2, padx=(0, 10), pady=10)
-
-    def _build_middle_frame(self):
-        """Construye la sección central donde va la lista (Treeview)."""
-        self.middle_frame = ctk.CTkFrame(self)
-        self.middle_frame.grid(row=1, column=0, padx=20, pady=10, sticky="nsew")
-        self.middle_frame.grid_rowconfigure(0, weight=1)
-        self.middle_frame.grid_columnconfigure(0, weight=1)
-        
-        # Estilo para el Treeview (adaptado al modo oscuro de CustomTkinter)
+    def _apply_treeview_styles(self):
         style = ttk.Style(self)
         style.theme_use("default")
         style.configure("Treeview", 
-                        background="#2b2b2b",
-                        foreground="white",
-                        rowheight=30,
-                        fieldbackground="#2b2b2b",
-                        borderwidth=0)
-        style.map('Treeview', background=[('selected', '#1f538d')])
-        style.configure("Treeview.Heading", background="#333333", foreground="white", font=('Helvetica', 11, 'bold'), borderwidth=0)
-        
-        # Componente Treeview (Ahora con 4 columnas)
-        columns = ("Paquete", "Estado", "Origen", "Descripción")
-        self.tree = ttk.Treeview(self.middle_frame, columns=columns, show="headings", style="Treeview")
-        self.tree.heading("Paquete", text="Nombre del Paquete", anchor="w")
-        self.tree.heading("Estado", text="Estado", anchor="center")
-        self.tree.heading("Origen", text="Origen", anchor="center")
-        self.tree.heading("Descripción", text="Descripción (Si es conocida)", anchor="w")
-        
-        self.tree.column("Paquete", width=350, anchor="w")
-        self.tree.column("Estado", width=120, anchor="center")
-        self.tree.column("Origen", width=120, anchor="center")
-        self.tree.column("Descripción", width=250, anchor="w")
-        
-        self.tree.grid(row=0, column=0, sticky="nsew")
-        
-        # Scrollbar vertical nativo de tkinter (ttk)
-        scrollbar = ttk.Scrollbar(self.middle_frame, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=scrollbar.set)
-        scrollbar.grid(row=0, column=1, sticky="ns")
-        
-        # Enlazar clic derecho para el menú contextual
-        self.tree.bind("<Button-3>", self.show_context_menu)
-        # En MacOS suele ser Button-2 o Control+Button-1
-        self.tree.bind("<Button-2>", self.show_context_menu)
+                        background=Config.COLOR_BG_DARK, 
+                        foreground="white", 
+                        rowheight=25, 
+                        fieldbackground=Config.COLOR_BG_DARK)
+        style.map('Treeview', background=[('selected', Config.COLOR_PRIMARY)])
 
-    def _build_bottom_frame(self):
-        """Construye los botones de acción de la parte inferior."""
-        self.bottom_frame = ctk.CTkFrame(self)
-        self.bottom_frame.grid(row=2, column=0, padx=20, pady=(10, 20), sticky="ew")
+    # --- Callbacks de UI (Delegados desde los frames) ---
+    def on_search(self, event=None):
+        self._render_list()
         
-        self.btn_refresh = ctk.CTkButton(self.bottom_frame, text="Actualizar Lista", command=self.refresh_list)
-        self.btn_refresh.pack(side="left", padx=10, pady=10)
+    def on_paste(self, event):
+        try:
+            self.top_frame.search_entry.delete("sel.first", "sel.last")
+        except Exception:
+            pass
+        self.after(50, lambda: self.on_search(None))
         
-        self.btn_export = ctk.CTkButton(self.bottom_frame, text="Exportar", width=100, fg_color="#1f538d", hover_color="#14375e", command=self.export_list)
-        self.btn_export.pack(side="left", padx=(0, 10), pady=10)
-        
-        self.status_label = ctk.CTkLabel(self.bottom_frame, text="Iniciando...", text_color="gray")
-        self.status_label.pack(side="left", padx=20)
-        
-        # Botones de acción alineados a la derecha
-        self.btn_uninstall = ctk.CTkButton(self.bottom_frame, text="Desinstalar (Avanzado)", fg_color="#d32f2f", hover_color="#9a0007", command=self.uninstall_selected)
-        self.btn_uninstall.pack(side="right", padx=10, pady=10)
-        
-        self.btn_disable = ctk.CTkButton(self.bottom_frame, text="Desactivar", fg_color="#f57c00", hover_color="#b26a00", command=self.disable_selected)
-        self.btn_disable.pack(side="right", padx=10, pady=10)
-        
-        self.btn_enable = ctk.CTkButton(self.bottom_frame, text="Activar / Restaurar", fg_color="#388e3c", hover_color="#00600f", command=self.enable_selected)
-        self.btn_enable.pack(side="right", padx=10, pady=10)
+    def on_filter(self, choice):
+        self._render_list()
 
-    def _build_context_menu(self):
-        """Construye el menú que aparece al dar clic derecho en la lista."""
-        self.context_menu = Menu(self, tearoff=0, bg="#2b2b2b", fg="white", activebackground="#1f538d")
-        self.context_menu.add_command(label="🔍 Investigar paquete en la Web...", command=self.search_package_on_web)
-        self.context_menu.add_separator()
-        self.context_menu.add_command(label="🛑 Forzar Cierre", command=self.force_stop_selected)
-        self.context_menu.add_command(label="☢️ Restablecer App (Borrar Todo)", command=self.clear_data_selected)
+    def _render_list(self):
+        s_text = self.top_frame.get_search_text().lower()
+        filter_s = self.top_frame.get_status_filter()
+        filter_o = self.top_frame.get_origin_filter()
+        
+        self.middle_frame.clear_items()
+        
+        for pkg, status, origen, descripcion in self.paquetes_cache:
+            match_search = s_text in pkg.lower() or s_text in descripcion.lower()
+            match_status = (filter_s == "Todos") or (filter_s == "Activo" and status == "Activo") or (filter_s == "Desactivado" and status == "Desactivado")
+            match_origin = (filter_o == "Cualquier Origen") or (filter_o == origen)
+            
+            if match_search and match_status and match_origin:
+                self.middle_frame.insert_item(pkg, status, origen, descripcion)
 
-    # ---- Lógica de Eventos de Interfaz ----
-    
-    def show_context_menu(self, event):
-        """Muestra el menú contextual en la posición del ratón tras seleccionar el elemento."""
-        item = self.tree.identify_row(event.y)
-        if item:
-            self.tree.selection_set(item) # Seleccionar la fila donde se hizo clic derecho
-            self.context_menu.post(event.x_root, event.y_root)
-
+    # --- Acciones Menú Contextual y Exportación ---
     def search_package_on_web(self):
-        """Abre el navegador web para buscar el paquete seleccionado."""
-        pkg = self._get_selected_package()
+        pkg = self.middle_frame.get_selected_package()
         if pkg:
             url = f"https://www.google.com/search?q=android+package+{pkg}"
             webbrowser.open(url)
 
     def force_stop_selected(self):
-        pkg = self._get_selected_package()
+        pkg = self.middle_frame.get_selected_package()
         if not pkg: return
-        self.status_label.configure(text=f"Forzando cierre de {pkg}...", text_color="#f57c00")
+        self.bottom_frame.update_status(f"Forzando cierre de {pkg}...", Config.COLOR_WARNING)
         def run():
             success, out = self.client.force_stop_package(pkg)
             self.after(0, lambda: self._handle_action_result(success, f"Proceso detenido: {pkg}", out))
         threading.Thread(target=run, daemon=True).start()
 
     def clear_data_selected(self):
-        pkg = self._get_selected_package()
+        pkg = self.middle_frame.get_selected_package()
         if not pkg: return
         
         confirm = messagebox.askyesno(
             "⚠️ ADVERTENCIA CRÍTICA", 
             f"¿Estás seguro que deseas BORRAR TODOS LOS DATOS de '{pkg}'?\n\n"
-            "Esto dejará la aplicación como recién instalada. Perderás tus cuentas iniciadas, configuraciones y progreso en esa app.\n\n"
-            "¿Deseas continuar?", 
+            "Esto dejará la aplicación como recién instalada. Perderás tus cuentas iniciadas.", 
             icon="warning"
         )
         if not confirm:
             return
             
-        self.status_label.configure(text=f"Restableciendo {pkg} a estado de fábrica...", text_color="#f57c00")
+        self.bottom_frame.update_status(f"Restableciendo {pkg}...", Config.COLOR_WARNING)
         def run():
             success, out = self.client.clear_package_data(pkg)
             self.after(0, lambda: self._handle_action_result(success, f"App restablecida: {pkg}", out))
@@ -194,226 +130,147 @@ class App(ctk.CTk):
         threading.Thread(target=run, daemon=True).start()
 
     def reboot_device_prompt(self):
-        """Muestra un diálogo de confirmación y manda a reiniciar el equipo."""
         confirm = messagebox.askyesno(
             "Confirmar Reinicio", 
-            "¿Estás seguro que deseas reiniciar el dispositivo conectado?\n\n"
-            "El teléfono se apagará y volverá a encender automáticamente. "
-            "Es muy recomendable hacerlo después de deshabilitar múltiples paquetes del sistema.", 
+            "¿Estás seguro que deseas reiniciar el dispositivo conectado?\n\nEl teléfono se apagará y volverá a encender.", 
             icon="warning"
         )
         if confirm:
-            self.status_label.configure(text="Enviando orden de reinicio...", text_color="#f57c00")
+            self.bottom_frame.update_status("Enviando orden de reinicio...", Config.COLOR_WARNING)
             def run():
                 success, out = self.client.reboot_device()
                 self.after(0, lambda: self._handle_action_result(success, "Dispositivo reiniciándose...", out))
             threading.Thread(target=run, daemon=True).start()
 
     def export_list(self):
-        """Exporta los elementos visibles en el Treeview a CSV o JSON."""
-        if not self.tree.get_children():
-            messagebox.showinfo("Exportar", "No hay paquetes para exportar en la lista actual.")
+        items = self.middle_frame.get_all_items()
+        if not items:
+            messagebox.showinfo("Exportar", "No hay paquetes para exportar.")
             return
             
         file_path = filedialog.asksaveasfilename(
             defaultextension=".csv",
             filetypes=[("Archivo CSV", "*.csv"), ("Archivo JSON", "*.json")],
-            title="Guardar lista de paquetes como..."
+            title="Guardar lista..."
         )
-        
         if not file_path:
-            return # El usuario canceló
-            
-        data_to_export = []
-        for child in self.tree.get_children():
-            data_to_export.append(self.tree.item(child, "values"))
+            return
             
         try:
             if file_path.endswith('.csv'):
                 with open(file_path, 'w', newline='', encoding='utf-8') as f:
                     writer = csv.writer(f)
                     writer.writerow(["Paquete", "Estado", "Origen", "Descripción"])
-                    writer.writerows(data_to_export)
+                    writer.writerows(items)
             elif file_path.endswith('.json'):
-                json_data = []
-                for row in data_to_export:
-                    json_data.append({
-                        "paquete": row[0],
-                        "estado": row[1],
-                        "origen": row[2],
-                        "descripcion": row[3]
-                    })
+                json_data = [{"paquete": r[0], "estado": r[1], "origen": r[2], "descripcion": r[3]} for r in items]
                 with open(file_path, 'w', encoding='utf-8') as f:
                     json.dump(json_data, f, indent=4, ensure_ascii=False)
-                    
-            messagebox.showinfo("Éxito", f"Lista exportada exitosamente.")
+            messagebox.showinfo("Éxito", "Lista exportada exitosamente.")
+            logger.info(f"Lista exportada a {file_path}")
         except Exception as e:
-            messagebox.showerror("Error", f"Ocurrió un error al guardar el archivo:\n{str(e)}")
+            logger.error(f"Error exportando: {e}")
+            messagebox.showerror("Error", f"Ocurrió un error:\n{str(e)}")
 
-    # ---- Lógica de ADB y Asincronismo ----
-    
+    # --- Acciones ADB Principales ---
     def refresh_list(self):
-        """Pide los datos de ADB en un hilo separado para no congelar la UI."""
-        self.status_label.configure(text="Obteniendo y clasificando paquetes...", text_color="#f57c00")
-        self.tree.delete(*self.tree.get_children()) # Limpiar lista actual
-        self.btn_refresh.configure(state="disabled")
+        self.bottom_frame.set_buttons_state("disabled")
+        self.bottom_frame.update_status("Cargando paquetes de ADB...", "white")
+        self.middle_frame.clear_items()
+        self.paquetes_cache.clear()
         
-        # Lanzar hilo en background (daemon=True para que muera al cerrar la app)
         threading.Thread(target=self._load_packages_thread, daemon=True).start()
 
     def _load_packages_thread(self):
-        """Se ejecuta fuera del hilo principal."""
-        # 0. Leer info del dispositivo para la barra superior
         device_info = self.client.get_device_info()
         def update_device_label():
             if device_info["model"] == "Desconocido":
-                self.device_info_label.configure(text="❌ No se detectó dispositivo por ADB", text_color="#d32f2f")
+                self.top_frame.update_device_info("❌ No se detectó dispositivo por ADB", Config.COLOR_DANGER)
             else:
-                self.device_info_label.configure(text=f"📱 {device_info['model']}  |  🤖 Android {device_info['android']}  |  🔋 {device_info['battery']}", text_color="#388e3c")
+                self.top_frame.update_device_info(f"📱 {device_info['model']}  |  🤖 Android {device_info['android']}  |  🔋 {device_info['battery']}", Config.COLOR_SUCCESS)
         self.after(0, update_device_label)
         
-        # 1. Obtenemos listas base por estado
         s_act, o_act = self.client.list_packages(disabled=False, uninstalled=False)
         s_dis, o_dis = self.client.list_packages(disabled=True, uninstalled=False)
         
-        # 2. Obtenemos listas de clasificación por origen
         s_sys, o_sys = self.client.list_packages(system=True)
         s_3rd, o_3rd = self.client.list_packages(third_party=True)
         
-        if not s_act:
-            # Hubo error de ADB
-            self.after(0, lambda: self.status_label.configure(text="Error de conexión ADB. ¿Está el celular conectado?", text_color="#d32f2f"))
-            self.after(0, lambda: self.btn_refresh.configure(state="normal"))
+        if not s_act and not s_dis:
+            logger.error("No se detectó el comando ADB o falló list_packages")
+            self.after(0, lambda: self._handle_action_result(False, "No se detectó dispositivo o ADB", o_act))
             return
             
         todos = [p.replace('package:', '').strip() for p in o_act.split('\n') if p.strip()]
         desactivados = [p.replace('package:', '').strip() for p in o_dis.split('\n') if p.strip()]
         
-        # ADB 'list packages' trae todos. Restamos los desactivados para obtener los activos reales:
         desactivados_set = set(desactivados)
         activos = [p for p in todos if p not in desactivados_set]
         
-        # Sets para búsqueda súper rápida
         sys_pkgs = set([p.replace('package:', '').strip() for p in o_sys.split('\n') if p.strip()])
         usr_pkgs = set([p.replace('package:', '').strip() for p in o_3rd.split('\n') if p.strip()])
         
-        def determinar_origen(pkg):
-            if pkg in usr_pkgs: return "Terceros"
-            if pkg in sys_pkgs: return "Sistema"
-            return "Desconocido"
-        
-        # Guardar todo en caché con su descripción del diccionario local
-        self.paquetes_cache = []
-        for pkg in activos:
-            desc = self.client.get_description(pkg)
-            self.paquetes_cache.append((pkg, "Activo", determinar_origen(pkg), desc))
-        for pkg in desactivados:
-            desc = self.client.get_description(pkg)
-            self.paquetes_cache.append((pkg, "Desactivado", determinar_origen(pkg), desc))
+        cache = []
+        for p in activos:
+            origen = "Sistema" if p in sys_pkgs else "Terceros" if p in usr_pkgs else "Cualquier Origen"
+            desc = self.client.get_description(p)
+            cache.append((p, "Activo", origen, desc))
             
-        # Actualizar interfaz en el hilo principal
-        self.after(0, lambda: self._render_list(self.search_entry.get(), self.filter_var.get(), self.origin_var.get()))
-        self.after(0, lambda: self.status_label.configure(text=f"Carga completa: {len(self.paquetes_cache)} paquetes encontrados.", text_color="#388e3c"))
-        self.after(0, lambda: self.btn_refresh.configure(state="normal"))
-
-    def _render_list(self, filter_text="", filter_status="Todos", filter_origin="Sistema"):
-        """Dibuja los elementos en el Treeview aplicando los filtros de búsqueda, estado y origen."""
-        self.tree.delete(*self.tree.get_children())
-        filter_text = filter_text.lower()
+        for p in desactivados:
+            origen = "Sistema" if p in sys_pkgs else "Terceros" if p in usr_pkgs else "Cualquier Origen"
+            desc = self.client.get_description(p)
+            cache.append((p, "Desactivado", origen, desc))
+            
+        self.paquetes_cache = sorted(cache, key=lambda x: x[0])
         
-        for pkg, status, origen, descripcion in self.paquetes_cache:
-            if filter_text in pkg.lower() or filter_text in descripcion.lower():
-                match_status = (filter_status == "Todos" or filter_status == status)
-                match_origin = (filter_origin == "Cualquier Origen" or filter_origin == origen)
-                
-                if match_status and match_origin:
-                    self.tree.insert("", "end", values=(pkg, status, origen, descripcion))
-                    
-    def _on_paste(self, event):
-        """Corrige el comportamiento en Linux para que al pegar reemplace el texto seleccionado."""
-        try:
-            # Intenta borrar el texto que esté sombreado/seleccionado antes de que tkinter pegue
-            self.search_entry.delete("sel.first", "sel.last")
-        except Exception:
-            pass
-        # Lanzamos la actualización visual tras unos milisegundos para asegurar que el texto pegado ya esté ahí
-        self.after(50, lambda: self.on_search(None))
+        self.after(0, self._render_list)
+        self.after(0, lambda: self.bottom_frame.update_status(f"Se cargaron {len(self.paquetes_cache)} paquetes.", Config.COLOR_SUCCESS))
+        self.after(0, lambda: self.bottom_frame.set_buttons_state("normal"))
+        logger.info(f"Refresco de lista completado: {len(self.paquetes_cache)} paquetes")
 
-    def on_search(self, event):
-        """Se lanza al soltar una tecla en el buscador."""
-        self._render_list(self.search_entry.get(), self.filter_var.get(), self.origin_var.get())
-        
-    def on_filter(self, choice):
-        """Se lanza al cambiar cualquiera de los menús desplegables."""
-        self._render_list(self.search_entry.get(), self.filter_var.get(), self.origin_var.get())
-
-    # ---- Acciones ----
-    
-    def _get_selected_package(self):
-        """Devuelve el paquete seleccionado en la lista o muestra una advertencia."""
-        selected_item = self.tree.selection()
-        if not selected_item:
-            messagebox.showwarning("Advertencia", "Por favor, selecciona un paquete de la lista primero.")
-            return None
-        item_values = self.tree.item(selected_item[0], "values")
-        return item_values[0] # Retorna solo el nombre del paquete (columna 0)
+    def _handle_action_result(self, success: bool, success_msg: str, output: str):
+        self.bottom_frame.set_buttons_state("normal")
+        if success:
+            self.bottom_frame.update_status(success_msg, Config.COLOR_SUCCESS)
+            logger.info(success_msg)
+        else:
+            self.bottom_frame.update_status("Error en la operación", Config.COLOR_DANGER)
+            messagebox.showerror("Error de ADB", output)
+            logger.error(f"Error UI: {output}")
 
     def disable_selected(self):
-        pkg = self._get_selected_package()
+        pkg = self.middle_frame.get_selected_package()
         if not pkg: return
-        
-        self.status_label.configure(text=f"Desactivando {pkg}...", text_color="#f57c00")
-        
-        def run():
-            success, out = self.client.disable_package(pkg)
-            self.after(0, lambda: self._handle_action_result(success, f"Paquete desactivado: {pkg}", out))
-            self.after(0, self.refresh_list)
-            
-        threading.Thread(target=run, daemon=True).start()
+        self.bottom_frame.update_status(f"Desactivando {pkg}...", "white")
+        self.bottom_frame.set_buttons_state("disabled")
+        threading.Thread(target=lambda: self._run_adb_action(self.client.disable_package, pkg, f"Desactivado: {pkg}"), daemon=True).start()
 
     def enable_selected(self):
-        pkg = self._get_selected_package()
+        pkg = self.middle_frame.get_selected_package()
         if not pkg: return
-        
-        self.status_label.configure(text=f"Activando/Restaurando {pkg}...", text_color="#f57c00")
-        
-        def run():
-            success, out = self.client.enable_package(pkg)
-            self.after(0, lambda: self._handle_action_result(success, f"Paquete activado: {pkg}", out))
-            self.after(0, self.refresh_list)
-            
-        threading.Thread(target=run, daemon=True).start()
+        self.bottom_frame.update_status(f"Activando {pkg}...", "white")
+        self.bottom_frame.set_buttons_state("disabled")
+        threading.Thread(target=lambda: self._run_adb_action(self.client.enable_package, pkg, f"Activado: {pkg}"), daemon=True).start()
 
     def uninstall_selected(self):
-        pkg = self._get_selected_package()
+        pkg = self.middle_frame.get_selected_package()
         if not pkg: return
         
-        confirm = messagebox.askyesno("Confirmar Desinstalación", 
-                                      f"¿Estás seguro que deseas desinstalar '{pkg}' del usuario?\n\n"
-                                      "Esto es útil para apps rebeldes. Si te equivocas, podrás intentar recuperarla con el botón 'Activar / Restaurar'.", 
-                                      icon="warning")
-        if not confirm:
-            return
-            
-        self.status_label.configure(text=f"Desinstalando {pkg}...", text_color="#f57c00")
-        
-        def run():
-            success, out = self.client.uninstall_package(pkg)
-            self.after(0, lambda: self._handle_action_result(success, f"Paquete desinstalado: {pkg}", out))
-            self.after(0, self.refresh_list)
-            
-        threading.Thread(target=run, daemon=True).start()
-        
-    def _handle_action_result(self, success, success_msg, error_msg):
-        """Procesa el resultado de un comando ADB mostrando éxito o el mensaje de error."""
+        confirm = messagebox.askyesno("Confirmar Desinstalación", f"¿Estás seguro que deseas DESINSTALAR '{pkg}'?\nEsto lo removerá para el usuario actual.", icon="warning")
+        if confirm:
+            self.bottom_frame.update_status(f"Desinstalando {pkg}...", Config.COLOR_WARNING)
+            self.bottom_frame.set_buttons_state("disabled")
+            threading.Thread(target=lambda: self._run_adb_action(self.client.uninstall_package, pkg, f"Desinstalado: {pkg}"), daemon=True).start()
+
+    def _run_adb_action(self, func, pkg, success_msg):
+        success, out = func(pkg)
+        self.after(0, lambda: self._handle_action_result(success, success_msg, out))
         if success:
-            self.status_label.configure(text=success_msg, text_color="#388e3c")
-        else:
-            self.status_label.configure(text="Error al procesar el paquete.", text_color="#d32f2f")
-            messagebox.showerror("Error ADB", f"Ocurrió un error:\n{error_msg}")
+            self.after(0, self.refresh_list)
 
 if __name__ == "__main__":
-    ctk.set_appearance_mode("System")
-    ctk.set_default_color_theme("blue")
-    app = App()
-    app.mainloop()
+    app = DebloatApp()
+    try:
+        app.mainloop()
+    except Exception as e:
+        logger.critical(f"La aplicación crasheó: {e}", exc_info=True)

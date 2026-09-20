@@ -1,7 +1,10 @@
 import subprocess
 import json
 import os
-from typing import Tuple, List
+from typing import List, Tuple, Dict, Set
+from src.core.logger import get_logger
+
+logger = get_logger(__name__)
 
 class ADBClientError(Exception):
     pass
@@ -26,6 +29,7 @@ class ADBClient:
 
     def _run_command(self, args: List[str]) -> Tuple[bool, str]:
         cmd = [self.adb_cmd] + args
+        logger.debug(f"Ejecutando comando ADB: {' '.join(cmd)}")
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, check=False)
             output = result.stdout.strip()
@@ -33,13 +37,18 @@ class ADBClient:
             
             # ADB a veces da código 0 (éxito) pero el comando falló internamente
             if result.returncode == 0 and not ("Failure" in output or "Exception" in output):
+                logger.debug(f"Éxito: {' '.join(cmd)}")
                 return True, output
             else:
-                # Si falló, priorizamos mostrar el texto de salida (donde ADB suele escupir el "Failure")
-                return False, error_output if error_output else output
+                # Si falló, priorizamos mostrar el texto de salida
+                err_msg = error_output if error_output else output
+                logger.error(f"Fallo ADB [{' '.join(cmd)}]: {err_msg}")
+                return False, err_msg
         except FileNotFoundError:
+            logger.error("Error crítico: El comando ADB no se encontró en el PATH.")
             return False, "Error: El comando ADB no se encontró en el sistema."
         except Exception as e:
+            logger.exception(f"Excepción inesperada al ejecutar {' '.join(cmd)}")
             return False, str(e)
 
     def list_packages(self, uninstalled: bool = False, disabled: bool = False, system: bool = False, third_party: bool = False) -> Tuple[bool, str]:

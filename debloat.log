@@ -1,0 +1,16 @@
+2026-09-20 16:47:48,995 - __main__ - [INFO] - Iniciando Samsung Debloat Tool UI
+2026-09-20 16:47:49,103 - src.core.adb_client - [DEBUG] - Ejecutando comando ADB: adb shell getprop ro.product.model
+2026-09-20 16:47:49,160 - src.core.adb_client - [DEBUG] - Éxito: adb shell getprop ro.product.model
+2026-09-20 16:47:49,160 - src.core.adb_client - [DEBUG] - Ejecutando comando ADB: adb shell getprop ro.build.version.release
+2026-09-20 16:47:49,202 - src.core.adb_client - [DEBUG] - Éxito: adb shell getprop ro.build.version.release
+2026-09-20 16:47:49,202 - src.core.adb_client - [DEBUG] - Ejecutando comando ADB: adb shell dumpsys battery
+2026-09-20 16:47:49,255 - src.core.adb_client - [DEBUG] - Éxito: adb shell dumpsys battery
+2026-09-20 16:47:49,255 - src.core.adb_client - [DEBUG] - Ejecutando comando ADB: adb shell pm list packages
+2026-09-20 16:47:49,384 - src.core.adb_client - [DEBUG] - Éxito: adb shell pm list packages
+2026-09-20 16:47:49,384 - src.core.adb_client - [DEBUG] - Ejecutando comando ADB: adb shell pm list packages -d
+2026-09-20 16:47:49,489 - src.core.adb_client - [DEBUG] - Éxito: adb shell pm list packages -d
+2026-09-20 16:47:49,490 - src.core.adb_client - [DEBUG] - Ejecutando comando ADB: adb shell pm list packages -s
+2026-09-20 16:47:49,606 - src.core.adb_client - [DEBUG] - Éxito: adb shell pm list packages -s
+2026-09-20 16:47:49,606 - src.core.adb_client - [DEBUG] - Ejecutando comando ADB: adb shell pm list packages -3
+2026-09-20 16:47:49,709 - src.core.adb_client - [DEBUG] - Éxito: adb shell pm list packages -3
+2026-09-20 16:47:49,716 - __main__ - [INFO] - Refresco de lista completado: 482 paquetes

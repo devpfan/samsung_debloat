@@ -1,0 +1,61 @@
+name: Build and Release
+
+on:
+  release:
+    types: [published]
+  push:
+    branches:
+      - main
+  workflow_dispatch: # Permite disparar la compilación manualmente desde GitHub
+
+jobs:
+  build:
+    name: Build for ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        # Se ejecutará simultáneamente en un servidor Ubuntu y uno Windows
+        os: [ubuntu-latest, windows-latest]
+
+    permissions:
+      contents: write # Necesario para subir archivos al release
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Install Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install Poetry
+      run: pip install poetry
+
+    - name: Install Dependencies
+      run: poetry install --no-interaction
+
+    - name: Build Executable (Linux)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        CTK_PATH=$(poetry run python -c "import customtkinter, os; print(os.path.dirname(customtkinter.__file__))")
+        poetry run pyinstaller --noconfirm --onefile --windowed --add-data "$CTK_PATH:customtkinter/" --add-data "src/core/bloatware_dict.json:src/core/" --name SamsungDebloat-Linux src/ui/app.py
+
+    - name: Build Executable (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        $CTK_PATH = poetry run python -c "import customtkinter, os; print(os.path.dirname(customtkinter.__file__))"
+        poetry run pyinstaller --noconfirm --onefile --windowed --add-data "$CTK_PATH;customtkinter/" --add-data "src/core/bloatware_dict.json;src/core/" --name SamsungDebloat-Windows.exe src/ui/app.py
+
+    - name: Upload to Release
+      if: github.event_name == 'release'
+      uses: softprops/action-gh-release@v2
+      with:
+        files: dist/*
+
+    - name: Store Artifacts for Manual Runs
+      if: github.event_name == 'workflow_dispatch'
+      uses: actions/upload-artifact@v4
+      with:
+        name: SamsungDebloat-${{ matrix.os }}
+        path: dist/*

@@ -1,9 +1,11 @@
 import customtkinter as ctk
-from tkinter import ttk, messagebox, Menu
+from tkinter import ttk, messagebox, Menu, filedialog
 import threading
 import sys
 import os
 import webbrowser
+import csv
+import json
 
 # Asegurar que importamos la lógica del core correctamente
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
@@ -44,6 +46,7 @@ class App(ctk.CTk):
         self.search_entry = ctk.CTkEntry(self.top_frame, placeholder_text="Buscar paquete (ej: bixby, samsung, facebook)...")
         self.search_entry.grid(row=0, column=0, padx=(10, 10), pady=10, sticky="ew")
         self.search_entry.bind("<KeyRelease>", self.on_search) # Filtrar en tiempo real mientras el usuario escribe
+        self.search_entry.bind("<<Paste>>", self._on_paste) # Fix para Linux: reemplazar texto seleccionado al pegar
         
         # Filtro por Origen
         self.origin_var = ctk.StringVar(value="Sistema") # Por defecto solo mostramos los del sistema
@@ -109,6 +112,9 @@ class App(ctk.CTk):
         self.btn_refresh = ctk.CTkButton(self.bottom_frame, text="Actualizar Lista", command=self.refresh_list)
         self.btn_refresh.pack(side="left", padx=10, pady=10)
         
+        self.btn_export = ctk.CTkButton(self.bottom_frame, text="Exportar", width=100, fg_color="#1f538d", hover_color="#14375e", command=self.export_list)
+        self.btn_export.pack(side="left", padx=(0, 10), pady=10)
+        
         self.status_label = ctk.CTkLabel(self.bottom_frame, text="Iniciando...", text_color="gray")
         self.status_label.pack(side="left", padx=20)
         
@@ -142,6 +148,47 @@ class App(ctk.CTk):
         if pkg:
             url = f"https://www.google.com/search?q=android+package+{pkg}"
             webbrowser.open(url)
+
+    def export_list(self):
+        """Exporta los elementos visibles en el Treeview a CSV o JSON."""
+        if not self.tree.get_children():
+            messagebox.showinfo("Exportar", "No hay paquetes para exportar en la lista actual.")
+            return
+            
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("Archivo CSV", "*.csv"), ("Archivo JSON", "*.json")],
+            title="Guardar lista de paquetes como..."
+        )
+        
+        if not file_path:
+            return # El usuario canceló
+            
+        data_to_export = []
+        for child in self.tree.get_children():
+            data_to_export.append(self.tree.item(child, "values"))
+            
+        try:
+            if file_path.endswith('.csv'):
+                with open(file_path, 'w', newline='', encoding='utf-8') as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["Paquete", "Estado", "Origen", "Descripción"])
+                    writer.writerows(data_to_export)
+            elif file_path.endswith('.json'):
+                json_data = []
+                for row in data_to_export:
+                    json_data.append({
+                        "paquete": row[0],
+                        "estado": row[1],
+                        "origen": row[2],
+                        "descripcion": row[3]
+                    })
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    json.dump(json_data, f, indent=4, ensure_ascii=False)
+                    
+            messagebox.showinfo("Éxito", f"Lista exportada exitosamente.")
+        except Exception as e:
+            messagebox.showerror("Error", f"Ocurrió un error al guardar el archivo:\n{str(e)}")
 
     # ---- Lógica de ADB y Asincronismo ----
     
@@ -213,6 +260,16 @@ class App(ctk.CTk):
                 if match_status and match_origin:
                     self.tree.insert("", "end", values=(pkg, status, origen, descripcion))
                     
+    def _on_paste(self, event):
+        """Corrige el comportamiento en Linux para que al pegar reemplace el texto seleccionado."""
+        try:
+            # Intenta borrar el texto que esté sombreado/seleccionado antes de que tkinter pegue
+            self.search_entry.delete("sel.first", "sel.last")
+        except Exception:
+            pass
+        # Lanzamos la actualización visual tras unos milisegundos para asegurar que el texto pegado ya esté ahí
+        self.after(50, lambda: self.on_search(None))
+
     def on_search(self, event):
         """Se lanza al soltar una tecla en el buscador."""
         self._render_list(self.search_entry.get(), self.filter_var.get(), self.origin_var.get())

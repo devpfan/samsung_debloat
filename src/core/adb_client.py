@@ -1,4 +1,6 @@
 import subprocess
+import json
+import os
 from typing import Tuple, List
 
 class ADBClientError(Exception):
@@ -6,8 +8,21 @@ class ADBClientError(Exception):
 
 class ADBClient:
     def __init__(self):
-        # Suponiendo que ADB está disponible en el PATH del sistema
+        # Asumimos que ADB está disponible en el PATH del sistema
         self.adb_cmd = "adb"
+        self.descriptions = {}
+        self._load_dictionary()
+
+    def _load_dictionary(self):
+        dict_path = os.path.join(os.path.dirname(__file__), "bloatware_dict.json")
+        try:
+            with open(dict_path, "r", encoding="utf-8") as f:
+                self.descriptions = json.load(f)
+        except Exception:
+            self.descriptions = {}
+
+    def get_description(self, pkg_name: str) -> str:
+        return self.descriptions.get(pkg_name, "Desconocido")
 
     def _run_command(self, args: List[str]) -> Tuple[bool, str]:
         cmd = [self.adb_cmd] + args

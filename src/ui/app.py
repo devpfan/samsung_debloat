@@ -1,8 +1,9 @@
 import customtkinter as ctk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, Menu
 import threading
 import sys
 import os
+import webbrowser
 
 # Asegurar que importamos la lógica del core correctamente
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
@@ -13,11 +14,11 @@ class App(ctk.CTk):
         super().__init__()
         
         self.title("Samsung Debloat Tool")
-        self.geometry("1000x700")
+        self.geometry("1100x700")
         self.minsize(900, 600)
         
         self.client = ADBClient()
-        self.paquetes_cache = [] # Lista de tuplas: (pkg, status, origen)
+        self.paquetes_cache = [] # Lista de tuplas: (pkg, status, origen, descripcion)
         
         # Configurar la cuadrícula principal (3 filas: Top, Middle, Bottom)
         self.grid_rowconfigure(0, weight=0) # Barra superior (tamaño fijo)
@@ -28,6 +29,7 @@ class App(ctk.CTk):
         self._build_top_frame()
         self._build_middle_frame()
         self._build_bottom_frame()
+        self._build_context_menu()
         
         # Cargar lista automáticamente al iniciar (en hilo separado)
         self.refresh_list()
@@ -74,16 +76,18 @@ class App(ctk.CTk):
         style.map('Treeview', background=[('selected', '#1f538d')])
         style.configure("Treeview.Heading", background="#333333", foreground="white", font=('Helvetica', 11, 'bold'), borderwidth=0)
         
-        # Componente Treeview (Ahora con 3 columnas)
-        columns = ("Paquete", "Estado", "Origen")
+        # Componente Treeview (Ahora con 4 columnas)
+        columns = ("Paquete", "Estado", "Origen", "Descripción")
         self.tree = ttk.Treeview(self.middle_frame, columns=columns, show="headings", style="Treeview")
         self.tree.heading("Paquete", text="Nombre del Paquete", anchor="w")
         self.tree.heading("Estado", text="Estado", anchor="center")
         self.tree.heading("Origen", text="Origen", anchor="center")
+        self.tree.heading("Descripción", text="Descripción (Si es conocida)", anchor="w")
         
-        self.tree.column("Paquete", width=600, anchor="w")
-        self.tree.column("Estado", width=150, anchor="center")
-        self.tree.column("Origen", width=150, anchor="center")
+        self.tree.column("Paquete", width=350, anchor="w")
+        self.tree.column("Estado", width=120, anchor="center")
+        self.tree.column("Origen", width=120, anchor="center")
+        self.tree.column("Descripción", width=250, anchor="w")
         
         self.tree.grid(row=0, column=0, sticky="nsew")
         
@@ -91,6 +95,11 @@ class App(ctk.CTk):
         scrollbar = ttk.Scrollbar(self.middle_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
         scrollbar.grid(row=0, column=1, sticky="ns")
+        
+        # Enlazar clic derecho para el menú contextual
+        self.tree.bind("<Button-3>", self.show_context_menu)
+        # En MacOS suele ser Button-2 o Control+Button-1
+        self.tree.bind("<Button-2>", self.show_context_menu)
 
     def _build_bottom_frame(self):
         """Construye los botones de acción de la parte inferior."""
@@ -112,6 +121,27 @@ class App(ctk.CTk):
         
         self.btn_enable = ctk.CTkButton(self.bottom_frame, text="Activar / Restaurar", fg_color="#388e3c", hover_color="#00600f", command=self.enable_selected)
         self.btn_enable.pack(side="right", padx=10, pady=10)
+
+    def _build_context_menu(self):
+        """Construye el menú que aparece al dar clic derecho en la lista."""
+        self.context_menu = Menu(self, tearoff=0, bg="#2b2b2b", fg="white", activebackground="#1f538d")
+        self.context_menu.add_command(label="🔍 Investigar paquete en la Web...", command=self.search_package_on_web)
+
+    # ---- Lógica de Eventos de Interfaz ----
+    
+    def show_context_menu(self, event):
+        """Muestra el menú contextual en la posición del ratón tras seleccionar el elemento."""
+        item = self.tree.identify_row(event.y)
+        if item:
+            self.tree.selection_set(item) # Seleccionar la fila donde se hizo clic derecho
+            self.context_menu.post(event.x_root, event.y_root)
+
+    def search_package_on_web(self):
+        """Abre el navegador web para buscar el paquete seleccionado."""
+        pkg = self._get_selected_package()
+        if pkg:
+            url = f"https://www.google.com/search?q=android+package+{pkg}"
+            webbrowser.open(url)
 
     # ---- Lógica de ADB y Asincronismo ----
     
@@ -140,8 +170,12 @@ class App(ctk.CTk):
             self.after(0, lambda: self.btn_refresh.configure(state="normal"))
             return
             
-        activos = [p.replace('package:', '').strip() for p in o_act.split('\n') if p.strip()]
+        todos = [p.replace('package:', '').strip() for p in o_act.split('\n') if p.strip()]
         desactivados = [p.replace('package:', '').strip() for p in o_dis.split('\n') if p.strip()]
+        
+        # ADB 'list packages' trae todos. Restamos los desactivados para obtener los activos reales:
+        desactivados_set = set(desactivados)
+        activos = [p for p in todos if p not in desactivados_set]
         
         # Sets para búsqueda súper rápida
         sys_pkgs = set([p.replace('package:', '').strip() for p in o_sys.split('\n') if p.strip()])
@@ -152,30 +186,32 @@ class App(ctk.CTk):
             if pkg in sys_pkgs: return "Sistema"
             return "Desconocido"
         
-        # Guardar todo en caché para filtrado instantáneo
+        # Guardar todo en caché con su descripción del diccionario local
         self.paquetes_cache = []
         for pkg in activos:
-            self.paquetes_cache.append((pkg, "Activo", determinar_origen(pkg)))
+            desc = self.client.get_description(pkg)
+            self.paquetes_cache.append((pkg, "Activo", determinar_origen(pkg), desc))
         for pkg in desactivados:
-            self.paquetes_cache.append((pkg, "Desactivado", determinar_origen(pkg)))
+            desc = self.client.get_description(pkg)
+            self.paquetes_cache.append((pkg, "Desactivado", determinar_origen(pkg), desc))
             
-        # Actualizar interfaz en el hilo principal (usar after(0, ...))
+        # Actualizar interfaz en el hilo principal
         self.after(0, lambda: self._render_list(self.search_entry.get(), self.filter_var.get(), self.origin_var.get()))
         self.after(0, lambda: self.status_label.configure(text=f"Carga completa: {len(self.paquetes_cache)} paquetes encontrados.", text_color="#388e3c"))
         self.after(0, lambda: self.btn_refresh.configure(state="normal"))
 
     def _render_list(self, filter_text="", filter_status="Todos", filter_origin="Sistema"):
-        """Dibuja los elementos en el Treeview aplicando los filtros de estado y origen."""
+        """Dibuja los elementos en el Treeview aplicando los filtros de búsqueda, estado y origen."""
         self.tree.delete(*self.tree.get_children())
         filter_text = filter_text.lower()
         
-        for pkg, status, origen in self.paquetes_cache:
-            if filter_text in pkg.lower():
+        for pkg, status, origen, descripcion in self.paquetes_cache:
+            if filter_text in pkg.lower() or filter_text in descripcion.lower():
                 match_status = (filter_status == "Todos" or filter_status == status)
                 match_origin = (filter_origin == "Cualquier Origen" or filter_origin == origen)
                 
                 if match_status and match_origin:
-                    self.tree.insert("", "end", values=(pkg, status, origen))
+                    self.tree.insert("", "end", values=(pkg, status, origen, descripcion))
                     
     def on_search(self, event):
         """Se lanza al soltar una tecla en el buscador."""

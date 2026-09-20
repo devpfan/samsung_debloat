@@ -65,4 +65,42 @@ class ADBClient:
         return success, output
 
     def uninstall_package(self, package_name: str) -> Tuple[bool, str]:
+        # -k mantiene los datos y el caché. --user 0 lo desinstala solo para el usuario actual.
         return self._run_command(["shell", "pm", "uninstall", "-k", "--user", "0", package_name])
+
+    def force_stop_package(self, package_name: str) -> Tuple[bool, str]:
+        """Fuerza el cierre de la aplicación matando todos sus procesos."""
+        return self._run_command(["shell", "am", "force-stop", package_name])
+
+    def clear_package_data(self, package_name: str) -> Tuple[bool, str]:
+        """Borra todos los datos de usuario y caché de la aplicación (Equivalente a Borrar Datos)."""
+        return self._run_command(["shell", "pm", "clear", package_name])
+
+    def get_device_info(self) -> dict:
+        """Extrae información básica del dispositivo conectado (Modelo, Android y Batería)."""
+        info = {
+            "model": "Desconocido",
+            "android": "Desconocido",
+            "battery": "Desconocido"
+        }
+        
+        succ, out = self._run_command(["shell", "getprop", "ro.product.model"])
+        if succ and out and not "error" in out.lower(): 
+            info["model"] = out.strip()
+            
+        succ, out = self._run_command(["shell", "getprop", "ro.build.version.release"])
+        if succ and out and not "error" in out.lower(): 
+            info["android"] = out.strip()
+            
+        succ, out = self._run_command(["shell", "dumpsys", "battery"])
+        if succ and out and not "error" in out.lower():
+            for line in out.split('\n'):
+                if "level:" in line:
+                    info["battery"] = line.split(":")[1].strip() + "%"
+                    break
+                    
+        return info
+
+    def reboot_device(self) -> Tuple[bool, str]:
+        """Envía el comando para reiniciar el dispositivo."""
+        return self._run_command(["reboot"])

@@ -42,9 +42,20 @@ class App(ctk.CTk):
         self.top_frame.grid(row=0, column=0, padx=20, pady=(20, 10), sticky="ew")
         self.top_frame.grid_columnconfigure(0, weight=1)
         
+        # Contenedor para la info del dispositivo y el botón de reinicio
+        self.header_frame = ctk.CTkFrame(self.top_frame, fg_color="transparent")
+        self.header_frame.grid(row=0, column=0, columnspan=3, pady=(0, 10), sticky="ew")
+        self.header_frame.grid_columnconfigure(0, weight=1)
+        
+        self.device_info_label = ctk.CTkLabel(self.header_frame, text="📱 Esperando conexión...", text_color="#f57c00", font=ctk.CTkFont(size=14, weight="bold"))
+        self.device_info_label.grid(row=0, column=0, sticky="w")
+        
+        self.btn_reboot = ctk.CTkButton(self.header_frame, text="🔄 Reiniciar Teléfono", width=140, fg_color="#d32f2f", hover_color="#9a0007", command=self.reboot_device_prompt)
+        self.btn_reboot.grid(row=0, column=1, sticky="e")
+        
         # Barra de búsqueda
         self.search_entry = ctk.CTkEntry(self.top_frame, placeholder_text="Buscar paquete (ej: bixby, samsung, facebook)...")
-        self.search_entry.grid(row=0, column=0, padx=(10, 10), pady=10, sticky="ew")
+        self.search_entry.grid(row=1, column=0, padx=(10, 10), pady=10, sticky="ew")
         self.search_entry.bind("<KeyRelease>", self.on_search) # Filtrar en tiempo real mientras el usuario escribe
         self.search_entry.bind("<<Paste>>", self._on_paste) # Fix para Linux: reemplazar texto seleccionado al pegar
         
@@ -52,13 +63,13 @@ class App(ctk.CTk):
         self.origin_var = ctk.StringVar(value="Sistema") # Por defecto solo mostramos los del sistema
         self.origin_menu = ctk.CTkOptionMenu(self.top_frame, values=["Cualquier Origen", "Sistema", "Terceros"],
                                              variable=self.origin_var, command=self.on_filter)
-        self.origin_menu.grid(row=0, column=1, padx=(0, 10), pady=10)
+        self.origin_menu.grid(row=1, column=1, padx=(0, 10), pady=10)
         
         # Filtro por Estado
         self.filter_var = ctk.StringVar(value="Todos")
         self.filter_menu = ctk.CTkOptionMenu(self.top_frame, values=["Todos", "Activo", "Desactivado"],
                                              variable=self.filter_var, command=self.on_filter)
-        self.filter_menu.grid(row=0, column=2, padx=(0, 10), pady=10)
+        self.filter_menu.grid(row=1, column=2, padx=(0, 10), pady=10)
 
     def _build_middle_frame(self):
         """Construye la sección central donde va la lista (Treeview)."""
@@ -132,6 +143,9 @@ class App(ctk.CTk):
         """Construye el menú que aparece al dar clic derecho en la lista."""
         self.context_menu = Menu(self, tearoff=0, bg="#2b2b2b", fg="white", activebackground="#1f538d")
         self.context_menu.add_command(label="🔍 Investigar paquete en la Web...", command=self.search_package_on_web)
+        self.context_menu.add_separator()
+        self.context_menu.add_command(label="🛑 Forzar Cierre", command=self.force_stop_selected)
+        self.context_menu.add_command(label="☢️ Restablecer App (Borrar Todo)", command=self.clear_data_selected)
 
     # ---- Lógica de Eventos de Interfaz ----
     
@@ -148,6 +162,52 @@ class App(ctk.CTk):
         if pkg:
             url = f"https://www.google.com/search?q=android+package+{pkg}"
             webbrowser.open(url)
+
+    def force_stop_selected(self):
+        pkg = self._get_selected_package()
+        if not pkg: return
+        self.status_label.configure(text=f"Forzando cierre de {pkg}...", text_color="#f57c00")
+        def run():
+            success, out = self.client.force_stop_package(pkg)
+            self.after(0, lambda: self._handle_action_result(success, f"Proceso detenido: {pkg}", out))
+        threading.Thread(target=run, daemon=True).start()
+
+    def clear_data_selected(self):
+        pkg = self._get_selected_package()
+        if not pkg: return
+        
+        confirm = messagebox.askyesno(
+            "⚠️ ADVERTENCIA CRÍTICA", 
+            f"¿Estás seguro que deseas BORRAR TODOS LOS DATOS de '{pkg}'?\n\n"
+            "Esto dejará la aplicación como recién instalada. Perderás tus cuentas iniciadas, configuraciones y progreso en esa app.\n\n"
+            "¿Deseas continuar?", 
+            icon="warning"
+        )
+        if not confirm:
+            return
+            
+        self.status_label.configure(text=f"Restableciendo {pkg} a estado de fábrica...", text_color="#f57c00")
+        def run():
+            success, out = self.client.clear_package_data(pkg)
+            self.after(0, lambda: self._handle_action_result(success, f"App restablecida: {pkg}", out))
+            self.after(0, self.refresh_list)
+        threading.Thread(target=run, daemon=True).start()
+
+    def reboot_device_prompt(self):
+        """Muestra un diálogo de confirmación y manda a reiniciar el equipo."""
+        confirm = messagebox.askyesno(
+            "Confirmar Reinicio", 
+            "¿Estás seguro que deseas reiniciar el dispositivo conectado?\n\n"
+            "El teléfono se apagará y volverá a encender automáticamente. "
+            "Es muy recomendable hacerlo después de deshabilitar múltiples paquetes del sistema.", 
+            icon="warning"
+        )
+        if confirm:
+            self.status_label.configure(text="Enviando orden de reinicio...", text_color="#f57c00")
+            def run():
+                success, out = self.client.reboot_device()
+                self.after(0, lambda: self._handle_action_result(success, "Dispositivo reiniciándose...", out))
+            threading.Thread(target=run, daemon=True).start()
 
     def export_list(self):
         """Exporta los elementos visibles en el Treeview a CSV o JSON."""
@@ -203,6 +263,15 @@ class App(ctk.CTk):
 
     def _load_packages_thread(self):
         """Se ejecuta fuera del hilo principal."""
+        # 0. Leer info del dispositivo para la barra superior
+        device_info = self.client.get_device_info()
+        def update_device_label():
+            if device_info["model"] == "Desconocido":
+                self.device_info_label.configure(text="❌ No se detectó dispositivo por ADB", text_color="#d32f2f")
+            else:
+                self.device_info_label.configure(text=f"📱 {device_info['model']}  |  🤖 Android {device_info['android']}  |  🔋 {device_info['battery']}", text_color="#388e3c")
+        self.after(0, update_device_label)
+        
         # 1. Obtenemos listas base por estado
         s_act, o_act = self.client.list_packages(disabled=False, uninstalled=False)
         s_dis, o_dis = self.client.list_packages(disabled=True, uninstalled=False)

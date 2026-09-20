@@ -1,52 +1,49 @@
-# Samsung Android Debloat Tool
+# Samsung Debloat Tool
 
-Herramienta gráfica (GUI) en Python para la auditoría, desinstalación y gestión de paquetes preinstalados (bloatware) en dispositivos Samsung Galaxy. Utiliza **Android Debug Bridge (ADB)** para realizar las operaciones de manera segura, sin necesidad de acceso Root ni alterar el estado de seguridad de Samsung Knox.
+Una herramienta gráfica, rápida y segura para limpiar el bloatware (aplicaciones preinstaladas basura) de los dispositivos Samsung Galaxy utilizando ADB. Diseñada para operar sin necesidad de acceso Root, manteniendo tu estado de Knox seguro (0x0).
 
 ## Características Principales
 
-* **No requiere Root**: Realiza operaciones a nivel de usuario (`--user 0`), manteniendo intacta la partición de solo lectura `/system`.
-* **100% Seguro y Reversible**: No afecta el estado de Samsung Knox (`0x0`), conserva la certificación Widevine L1 y permite deshacer cualquier cambio restaurando el dispositivo de fábrica.
-* **Interfaz Fluida (GUI)**: Desarrollada con `CustomTkinter` y diseñada con concurrencia (`threading`) para asegurar que la aplicación no se congele durante la ejecución de los comandos ADB.
-* **Gestión Avanzada**: Permite listar paquetes activos o desactivados, realizar búsquedas con filtros en tiempo real y ejecutar acciones en lote (desactivar, activar o desinstalar) fácilmente.
+- **Interfaz Moderna y Asíncrona:** Construida con `CustomTkinter`. La carga de cientos de paquetes nunca congelará la aplicación gracias a su manejo avanzado de hilos (threading).
+- **Monitor de Sistema:** Reconoce automáticamente tu dispositivo conectado mostrando el Modelo, Versión de Android y nivel de Batería actual en la barra superior.
+- **Detección de Origen Segura:** Clasifica los paquetes entre aplicaciones del "Sistema" y de "Terceros" leyendo las particiones nativas por ADB.
+- **Diccionario de Bloatware Integrado:** Traduce los códigos de paquetes ininteligibles a nombres legibles (ej: `com.samsung.android.bixby.agent` -> "Asistente de Voz Bixby"). El diccionario en `bloatware_dict.json` es 100% personalizable.
+- **Acciones Rápidas (Clic Derecho):** 
+  - 🔍 **Investigar en la Web:** Busca automáticamente el nombre del paquete en tu navegador si no sabes qué hace.
+  - 🛑 **Forzar Cierre:** Mata todos los procesos de una app conflictiva.
+  - ☢️ **Restablecer App:** Borra todos los datos y caché de la app (como recién instalada).
+- **Operaciones de Limpieza:** Activa, Desactiva o Desinstala paquetes ocultos únicamente para el Usuario 0, previniendo daños irreparables.
+- **Exportación de Listas:** Exporta lo que estás viendo en la tabla directamente a formato `.csv` (Excel) o `.json` para llevar un respaldo de qué desactivaste.
 
-## Requisitos del Entorno
+## Requisitos Previos
 
-### Computadora (Host)
+- Python 3.10 o superior.
+- [Poetry](https://python-poetry.org/) instalado en el sistema.
+- Un dispositivo Android/Samsung con la **Depuración por USB** activada en las *Opciones de Desarrollador*.
+- Los controladores de [Platform-Tools (ADB)](https://developer.android.com/studio/command-line/adb) instalados y disponibles en el PATH del sistema.
 
-* **Python**: Versión `>= 3.10`
-* **Tkinter**: Interfaz gráfica nativa de Python (en sistemas Linux puede requerir el paquete `python3-tk`).
-* **ADB**: Herramienta `adb` instalada y disponible en las variables de entorno (`PATH`).
+## Instalación y Ejecución
 
-### Dispositivo Móvil
-
-* Dispositivo Samsung Galaxy con **Android 8.0** o superior (validado con One UI 2.5 / Android 10).
-* **Opciones de desarrollador** y **Depuración por USB** activadas y autorizadas con la PC.
-
-## Instalación y Uso (En Desarrollo)
-
-El proyecto utiliza **Poetry** para la gestión de dependencias y el entorno virtual.
-
-1. Clona el repositorio e ingresa a la carpeta:
-
+1. Clona este repositorio y entra en la carpeta:
    ```bash
-   git clone <URL_DEL_REPO>
-   cd Samsung_debloat
+   git clone https://github.com/devpfan/samsung_debloat.git
+   cd samsung_debloat
    ```
-
-2. Inicializa el entorno (opcional si no tienes librerías externas por ahora):
-
+2. Instala las dependencias gráficas usando Poetry:
    ```bash
    poetry install
    ```
-
-3. Ejecuta la herramienta gráfica:
-
+3. Conecta tu teléfono mediante un cable de datos, asegúrate de haberle dado en "Permitir" a la alerta en tu pantalla, y ejecuta la interfaz:
    ```bash
    poetry run python src/ui/app.py
    ```
 
-*(Nota: Los comandos de ejecución pueden variar conforme avance el desarrollo de la estructura del proyecto).*
+## Estructura de Carpetas
 
-## Advertencias
+- `src/core/adb_client.py`: Motor base que ejecuta y parsea todos los subprocesos de ADB con control de errores.
+- `src/core/bloatware_dict.json`: Base de datos local para descripciones de paquetes sospechosos habituales (Meta, Microsoft, Bixby).
+- `src/ui/app.py`: Archivo de control principal de la interfaz visual y la lógica asíncrona.
+- `scripts/test_adb.py`: Herramienta CLI de diagnóstico rápido para validar si los drivers ADB y el teléfono se comunican correctamente.
 
-Deshabilitar ciertos paquetes críticos del sistema podría ocasionar comportamientos inesperados, pérdida de funcionalidades del proveedor o *bootloops* temporales. Utiliza la herramienta bajo tu propia responsabilidad y audita correctamente el bloatware antes de congelarlo.
+## Aviso de Seguridad
+Desinstalar componentes críticos de Samsung (como `com.samsung.android.lool` o los frameworks de telefonía) puede causar inestabilidad. Al utilizar esta herramienta, el dispositivo siempre puede ser recuperado realizando un restablecimiento de fábrica (Hard Reset), ya que los `.apk` originales de `/system` no son destruidos. Úsala con precaución y siempre utiliza el botón de "Investigar" ante la duda.
